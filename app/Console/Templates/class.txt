@@ -1,0 +1,17 @@
+<?php
+namespace App\Repositories;
+
+use App\Models\#MODEL#;
+use App\Repositories\Interfaces\#INTERFACE#;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\DB;
+
+class #REPOSITORY# extends BaseRepository implements #INTERFACE#
+{
+    public function __construct(#MODEL# $model)
+    {
+        parent::__construct($model);
+    }
+
+#METHOD#
+}

@@ -1,0 +1,312 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Transaction;
+use App\User;
+use App\Services\LogService;
+use Illuminate\Support\Facades\Http;
+use App\Repositories\Interfaces\TransactionRepositoryInterface;
+
+class TransactionServiceOld
+{
+	public function __construct(LogService $logService)
+	{
+		$this->initUrl = config('app_constants.online_payment.ekpay.initUrl');
+		$this->redirectUri = config('app_constants.online_payment.ekpay.redirectUri');
+		$this->ipnUri = config('app_constants.online_payment.ekpay.ipnUri');
+		$this->httpHeaders = config('app_constants.online_payment.ekpay.httpHeaders');
+        $this->merInfo = config('app_constants.online_payment.ekpay.merInfo');
+        $this->orderDetails = config('app_constants.online_payment.ekpay.orderDetails');
+        $this->whiteListIP = config('app_constants.online_payment.ekpay.whiteListIP');
+        $this->payload = $this->response = null;
+        $this->cancelUri = config('app_constants.online_payment.ekpay.cancelUri');
+        $this->failedUri = config('app_constants.online_payment.ekpay.failedUri');
+        $this->successUri = config('app_constants.online_payment.ekpay.successUri');
+        $this->logService = $logService;
+	}
+
+    public function sendPostRequestToApi($url, $body, $httpHeaders)
+    {
+    	try {
+    		$response = Http::withHeaders($httpHeaders)
+                        ->withOptions([
+                            'verify' => false,
+                        ])
+                        ->post($url, $body);
+
+	    	if ($response->successful()) {
+	    		$this->response = $response->json();
+	    		return true;
+	    	} else {
+	    		$this->response = json_decode($response->body());
+	    		return false;
+	    	}
+    	} catch (\Exception $e) {
+    		return false;
+    	}
+    }
+
+	public function ekpayAuthentication($app)
+	{
+		$stoken = $redirectUri = null;
+		$appid = $app->id;
+		$userId = optional($app->applicant)->user_id;
+		$amount = $this->amount($app);
+		$customerInfo = [];
+
+		$fullname = optional(optional($app)->applicant)->fullname;
+    	$address = optional(optional(optional($app)->applicant)->present_address)->description;
+    	$mobileNumber = preg_replace(array('/^88/','/^\+88/'), "", optional(optional(optional($app)->applicant)->user)->mobile);
+    	$email = optional(optional(optional($app)->applicant)->user)->email;
+
+    	$customerInfo['cust_id'] = $userId;
+    	$customerInfo['cust_email'] = $email;
+    	$customerInfo['cust_mail_addr'] = $address;
+    	$customerInfo['cust_mobo_no'] = $mobileNumber;
+    	$customerInfo['cust_name'] = $fullname;
+
+		$this->prepareAuthPayload($amount, $customerInfo, $appid);
+        $this->payload['application_id'] = $appid;
+
+        $this->writeLog($this->payload, 'Payment Init Payload');
+		$this->sendPostRequestToApi($this->initUrl, $this->payload, $this->httpHeaders);
+        $this->writeLog($this->response, 'Payment Init Response');
+        // \Log::channel('ekpay')->info('Application: ', $this->response);
+
+		$code = $status = $message = null;
+		$trxid = $this->payload['trns_info']['trnx_id'];
+
+		if (isset($this->response['msg_code']) && $this->response['msg_code'] == '1000') {
+			$status = true;
+			$code = $this->response['msg_code'];
+			$stoken = $this->response['secure_token'];
+            $searchParams = ['#SECURETOKEN#', '#TRANSACTIONID#'];
+            $replaceParams = [$stoken, $trxid];
+
+			$this->redirectUri = str_replace($searchParams, $replaceParams, $this->redirectUri);
+            $message = $this->response['msg_det'];
+		} else {
+			$status = false;
+
+            if (isset($this->response['msg_code'])) {
+                $code = $this->response['msg_code'];
+                $message = $this->response['msg_det'];
+            }
+
+            if (isset($this->response['responseCode'])) {
+                $code = $this->response['responseCode'];
+                $message = $this->response['responseMessage'];
+            }
+		}
+
+        $initData = $this->preparePayloadData($status, $code, $message);
+
+        return [
+            'status' => $status,
+            'redirect_url' => $this->redirectUri,
+            'data' => $initData,
+            'message' => $message
+        ];
+	}
+
+    private function preparePayloadData($status, $code, $message)
+    {
+        if ($status) {
+            $this->response['redirect_uri'] = $this->redirectUri;
+
+            return [
+                'order_no' => $this->payload['trns_info']['ord_id'],
+                'pi_payload' => json_encode($this->payload),
+                'pi_response' => json_encode($this->response),
+                'pi_status' => $status,
+                'pi_code' => $code,
+                'pi_message' => $message,
+                'pi_token' => $this->response['secure_token'],
+                'ekpay_transaction_id' => $this->payload['trns_info']['trnx_id'],
+                'white_list_ip' => $this->whiteListIP,
+                'created_date' => date('Y-m-d'),
+                'ipn_url' => $this->ipnUri,
+                'visitor' => $this->clientIpAddress(),
+            ];
+        }
+
+        return null;
+    }
+
+    private function clientIpAddress()
+    {
+        try{
+            return file_get_contents('https://api.ipify.org');
+        } catch(\Exception $e) {
+            return null;
+        }
+    }
+
+	private function amount($app)
+	{
+		return $app->app_payable + $app->vat_payable;
+	}
+
+    public function prepareAuthPayload($amount, $customerInfo, $appid)
+    {
+    	$orderNumber = $this->generateOrderNumber();
+    	$transId = $this->generateTrnsId($orderNumber);
+
+    	$this->payload = [
+    		'mer_info' => $this->merInfo,
+    		'req_timestamp' => date("Y-m-d H:i:s ") . "GMT+6",
+    		'feed_uri' => [
+    			'c_uri' => str_replace('#APP_ID#', $appid, $this->cancelUri),
+    			'f_uri' => str_replace('#APP_ID#', $appid, $this->failedUri),
+    			's_uri' => str_replace('#APP_ID#', $appid, $this->successUri),
+    		],
+    		'cust_info' => $customerInfo,
+    		'trns_info' => [
+    			'ord_det' => $this->orderDetails,
+    			'ord_id' => $orderNumber,
+    			'trnx_id' => $transId,
+    			'trnx_amt' => $amount,
+    			'trnx_currency' => 'BDT',
+    		],
+    		'ipn_info' => [
+    			'ipn_channel' => '1',
+			    'ipn_email' => 'tanvir.eatl@gmail.com',
+			    'ipn_uri' => $this->ipnUri,
+    		],
+    		'mac_addr' => $this->whiteListIP,
+    	];
+    }
+
+    private function generateOrderNumber()
+    {
+    	$orderNumber = 1;
+
+    	$lastOrder = Transaction::select('id','order_no')
+                ->whereRaw("DATE(created_at) like '".date('Y-m-d')."%'")
+                ->orderBy('id', 'desc')
+                ->first();
+
+    	if ($lastOrder) {
+    		$orderNumber = (int)$lastOrder->order_no + 1;
+    	}
+
+    	return $orderNumber;
+    }
+
+    private function generateTrnsId($orderNumber)
+    {
+        // Check Last Order Number again
+        $orderNumber = $this->generateOrderNumber();
+        return date('Ymd') . str_pad($orderNumber,7,0,STR_PAD_LEFT);
+    }
+
+    public function prepareIpnResponse($inputs)
+    {
+        $status = $code = $message = null;
+        $merTransId = $inputs['trnx_info']['mer_trnx_id'];
+
+        if (isset($inputs['msg_code']) && $inputs['msg_code'] == '1020') {
+            $status = true;
+            $code = $inputs['msg_code'];
+            $message = $inputs['msg_det'];
+        } else {
+            $status = false;
+
+            if (isset($inputs['msg_code'])) {
+                $code = $inputs['msg_code'];
+                $message = $inputs['msg_det'];
+            }
+        }
+
+		$data = [
+			'ipn_response' => json_encode($inputs),
+			'ipn_status' => $status,
+			'ipn_code' => $code,
+			'ipn_message' => $message,
+		];
+
+        return compact('merTransId', 'data', 'status');
+    }
+
+    public function calculateAppPayable($inputs, $app)
+    {
+        $ekpayTrnxAmount = $inputs['trnx_info']['trnx_amt'];
+        $appPayable = $app['app_payable'] - $ekpayTrnxAmount;
+        return $appPayable < 0 ? 0 : $appPayable;
+    }
+
+    public function calculatePaidPayment($inputs)
+    {
+        $ekpayTrnxAmount = $inputs['trnx_info']['trnx_amt'];
+        $ekpayServiceCharge = $inputs['trnx_info']['ekpay_charge'];
+        $paidPayment = $ekpayTrnxAmount + $ekpayServiceCharge;
+
+        return $paidPayment < 0 ? 0 : $paidPayment;
+    }
+
+    public function calculateServiceChargePayable($inputs, $app)
+    {
+        $ekpayServiceCharge = $inputs['trnx_info']['ekpay_charge'];
+        $appServiceChargePayable = $app['service_charge_payable'];
+        $payableServiceCharge = $appServiceChargePayable - $ekpayServiceCharge;
+
+        return $payableServiceCharge < 0 ? 0 : $payableServiceCharge;
+    }
+
+    public function getApplicationIdFromTransaction($transaction)
+    {
+        $data = json_decode($transaction['pi_payload']);
+        return $data->application_id;
+    }
+
+    public function prepareApplicationData($inputs, $application)
+    {
+        $appPayable = $this->calculateAppPayable($inputs, $application);
+        $paidPayment = $this->calculatePaidPayment($inputs);
+        $serviceChargePayable = $this->calculateServiceChargePayable($inputs, $application);
+
+        $data['app_payable'] = $appPayable;
+        $data['service_charge_payable'] = $serviceChargePayable;
+        $data['paid_payment'] = $paidPayment;
+
+        $totalFee = $application->total_fee;
+
+        if ($totalFee == $paidPayment) {
+            $data['is_paid'] = true;
+            // $data['current_status'] = 'FORWARDED';
+        }
+
+        return $data;
+    }
+
+    public function preparePaymentData($applicationData, $application, $transactionId)
+    {
+        return [
+            'application_id' => $application->id,
+            'type' => 'APPLICATION',
+            'amount' => $applicationData['paid_payment'],
+            'transaction_id' => $transactionId,
+            'created_by' => $application->applicant_id,
+        ];
+    }
+
+    public function manuallyloggedInApplicant($userId)
+    {
+        $user = User::find($userId);
+        \Auth::login($user);
+    }
+
+    public function writeLog($data, $title = null)
+    {
+        $data = json_encode($data, JSON_PRETTY_PRINT);
+
+        if ($title) {
+            $data = $title."\n".$data."\n\n";
+        }
+
+        $filename = 'ekpay.log';
+
+        $this->logService->write($data, $filename);
+    }
+}

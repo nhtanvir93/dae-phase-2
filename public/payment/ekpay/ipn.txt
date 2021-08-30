@@ -1,0 +1,47 @@
+
+
+IPN Response Received (2021-06-20 13:09:23)
+
+{
+    "secure_token": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJkYWVfdGVzdCIsImF1dGgiOiJST0xFX01FUkNIQU5UIiwiZXhwIjoxNjI0MTE0MzA4fQ.A2gdOJ_F1AVmTd6Z1_QwEGKAJA5QJANPeC9EhfSDMGSBmyS0gC3CkK7U6BzgUKEj0CzQuiMp_b5GECowKbP0Bw",
+    "msg_code": "1020",
+    "msg_det": "Successfully Paid",
+    "req_timestamp": "2018-02-25 10:16:25 GMT + 6",
+    "basic_Info": {
+        "mer_reg_id": "ekPayWeb",
+        "ipn_info": "ipn_chanel=2;mail=ipn@ekpay.com;uri=www.ekpay\/ipnlistener\/v1\/SenIPN",
+        "redirect_to": "www.ekpay.gov.bd\/v1\/billPaidSuccesss?trnsId=105d",
+        "dgtl_sign": "Using Google Chrome;Windows 10 64 bit;ip 172.16.16.114;dhaka BD",
+        "ord_desc": "Wasa Bill Payment for the month of Jan-18",
+        "remarks": null
+    },
+    "cust_info": {
+        "cust_id": "Payer1005",
+        "cust_name": "Mr. Payee",
+        "cust_mobo_no": "+8801754896533",
+        "cust_email": "payee@gmail.com",
+        "cust_mail_addr": "361\/A,Dhanmondi, Dhaka,BD"
+    },
+    "trnx_info": {
+        "trnx_amt": "100",
+        "trnx_id": "56987",
+        "mer_trnx_id": "202106190000001",
+        "curr": "BDT",
+        "pi_trnx_id": "B3h4e+O6hEnMJQH1Ev5NsSMUjeI=",
+        "pi_charge": "3",
+        "ekpay_charge": "5",
+        "pi_discount": "0",
+        "total_ser_chrg": "8",
+        "discount": "0",
+        "promo_discount": "8",
+        "total_pabl_amt": "208"
+    },
+    "pi_det_info": {
+        "pay_timestamp": "2018-02-25 10: 18: 25 GMT + 6",
+        "pi_name": "Dutch Bangla Limited",
+        "pi_type": "Card-Nexus",
+        "card_holder_name": "Mr. X",
+        "pi_number": "484096******3114",
+        "pi_gateway ": "DBBL-Nexus Network"
+    }
+}
