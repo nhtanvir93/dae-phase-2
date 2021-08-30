@@ -1,6 +1,6 @@
 # DAE Phase 2
 
-This Project is based on LARAVEL 7.*.
+This Project is based on LARAVEL 8.*.
 This is the API part.
 
 ## Installation Instructions:
